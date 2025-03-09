@@ -1,4 +1,4 @@
-# Concurrent System Stats
+# ConSync Monitor
 
 A multi-process system monitoring tool with both CLI and GUI interfaces.
 
