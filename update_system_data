@@ -1,0 +1,190 @@
+/**
+ * Collect system data and update GUI (timer callback)
+ */
+gboolean update_system_data(gpointer user_data) {
+    GuiData *data = (GuiData *)user_data;
+    struct utsname sys_name_info;
+    int days, hours, minutes, seconds;
+    
+    // Collect CPU usage - improved method
+    LOG_INFO(SYS_MON_SUCCESS, "Collecting CPU information");
+    
+    static unsigned long prev_cpu_stats[7] = {0, 0, 0, 0, 0, 0, 0};
+    static unsigned long curr_cpu_stats[7] = {0, 0, 0, 0, 0, 0, 0};
+    static int cpu_init = 0;
+    
+    // 이전 CPU 통계를 저장
+    if (cpu_init) {
+        memcpy(prev_cpu_stats, curr_cpu_stats, sizeof(curr_cpu_stats));
+    } 
+    
+    // 현재 CPU 통계 수집
+    get_cpu_stats(curr_cpu_stats);
+    
+    // 처음 실행시 초기화 
+    if (!cpu_init) {
+        memcpy(prev_cpu_stats, curr_cpu_stats, sizeof(curr_cpu_stats));
+        cpu_init = 1;
+        
+        // 초기 CPU 사용량: 현재 통계만 사용해서 계산
+        unsigned long total = curr_cpu_stats[0] + curr_cpu_stats[1] + 
+                           curr_cpu_stats[2] + curr_cpu_stats[3];
+        if (total > 0) {
+            data->cpu_usage = 100.0 - (double)curr_cpu_stats[3] * 100.0 / total;
+        } else {
+            data->cpu_usage = 0.0;
+        }
+    } else {
+        // CPU 사용량 계산 (idle 시간의 변화를 통해)
+        unsigned long prev_total = prev_cpu_stats[0] + prev_cpu_stats[1] + 
+                                 prev_cpu_stats[2] + prev_cpu_stats[3];
+        unsigned long curr_total = curr_cpu_stats[0] + curr_cpu_stats[1] + 
+                                 curr_cpu_stats[2] + curr_cpu_stats[3];
+        
+        unsigned long total_diff = curr_total - prev_total;
+        unsigned long idle_diff = curr_cpu_stats[3] - prev_cpu_stats[3];
+        
+        if (total_diff > 0) {
+            data->cpu_usage = 100.0 * (1.0 - (double)idle_diff / (double)total_diff);
+        }
+    }
+    
+    // CPU 사용량 유효성 검사 (0-100% 범위)
+    if (data->cpu_usage < 0.0) data->cpu_usage = 0.0;
+    if (data->cpu_usage > 100.0) data->cpu_usage = 100.0;
+    
+    // 계산 결과 로깅
+    printf("CPU Usage: %.2f%%\n", data->cpu_usage);
+    
+    // 나머지 코드는 동일하게 유지...
+    
+    // Update CPU history
+    if (data->cpu_history == NULL) {
+        LOG_INFO(SYS_MON_SUCCESS, "Initializing CPU history (size: 60)");
+        data->cpu_history_size = 60; // 1 minute of data (1 second intervals)
+        data->cpu_history = calloc(data->cpu_history_size, sizeof(float));
+        
+        // Set initial history values
+        for (int i = 0; i < data->cpu_history_size; i++) {
+            data->cpu_history[i] = (float)data->cpu_usage;
+        }
+    } else {
+        // Move data
+        for (int i = 0; i < data->cpu_history_size - 1; i++) {
+            data->cpu_history[i] = data->cpu_history[i + 1];
+        }
+        // Add new data
+        data->cpu_history[data->cpu_history_size - 1] = (float)data->cpu_usage;
+    }
+    
+    // Collect memory information - more accurate function
+    if (get_detailed_memory_info(&data->memory_used, &data->memory_total, 
+                                &data->swap_used, &data->swap_total) != 0) {
+        // If error occurs, use previous method
+        data->memory_used = calculate_memory_usage();
+        data->memory_total = calculate_memory_total();
+        data->swap_used = calculate_swap_usage();
+        data->swap_total = calculate_swap_total();
+    }
+    
+    // Update memory history
+    if (data->memory_history == NULL) {
+        data->memory_history_size = 60; // 1 minute of data (1 second intervals)
+        data->memory_history = calloc(data->memory_history_size, sizeof(double));
+        
+        // Set initial history values
+        for (int i = 0; i < data->memory_history_size; i++) {
+            data->memory_history[i] = data->memory_used;
+        }
+    } else {
+        // Move data
+        for (int i = 0; i < data->memory_history_size - 1; i++) {
+            data->memory_history[i] = data->memory_history[i + 1];
+        }
+        // Add new data
+        data->memory_history[data->memory_history_size - 1] = data->memory_used;
+    }
+    
+    // Update swap history
+    if (data->swap_history == NULL) {
+        data->swap_history_size = 60; // 1 minute of data (1 second intervals)
+        data->swap_history = calloc(data->swap_history_size, sizeof(double));
+        
+        // Set initial history values
+        for (int i = 0; i < data->swap_history_size; i++) {
+            data->swap_history[i] = data->swap_used;
+        }
+    } else {
+        // Move data
+        for (int i = 0; i < data->swap_history_size - 1; i++) {
+            data->swap_history[i] = data->swap_history[i + 1];
+        }
+        // Add new data
+        data->swap_history[data->swap_history_size - 1] = data->swap_used;
+    }
+    
+    // Collect system information
+    if (uname(&sys_name_info) == 0) {
+        free(data->system_name);
+        data->system_name = strdup(sys_name_info.sysname);
+        
+        free(data->node_name);
+        data->node_name = strdup(sys_name_info.nodename);
+        
+        free(data->version);
+        data->version = strdup(sys_name_info.version);
+        
+        free(data->release);
+        data->release = strdup(sys_name_info.release);
+        
+        free(data->machine);
+        data->machine = strdup(sys_name_info.machine);
+    }
+    
+    // Get system uptime
+    get_system_uptime(&days, &hours, &minutes, &seconds);
+    data->uptime_days = days;
+    data->uptime_hours = hours;
+    data->uptime_minutes = minutes;
+    data->uptime_seconds = seconds;
+    
+    // Collect user session information
+    if (data->users != NULL) {
+        for (int i = 0; i < data->user_count; i++) {
+            free(data->users[i]);
+        }
+        free(data->users);
+    }
+    
+    // Collect user session information
+    // Currently, a simple example
+    data->user_count = 1;
+    data->users = calloc(data->user_count, sizeof(char *));
+    data->users[0] = strdup("Current User (Terminal)");
+    
+    // Update GUI
+    update_system_info_display(&widgets, data);
+    update_cpu_display(&widgets, data);
+    update_memory_display(&widgets, data);
+    update_users_display(&widgets, data);
+    
+    // Update status bar
+    char status_msg[128];
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+    
+    snprintf(status_msg, sizeof(status_msg), 
+             "Last updated: %02d:%02d:%02d | CPU: %.1f%% | Memory: %.1f%% | Swap: %.1f%% | System: %s",
+             tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec,
+             data->cpu_usage,
+             data->memory_total > 0 ? (data->memory_used / data->memory_total * 100.0) : 0.0,
+             data->swap_total > 0 ? (data->swap_used / data->swap_total * 100.0) : 0.0,
+             data->system_name ? data->system_name : "Unknown");
+    
+    gtk_statusbar_pop(GTK_STATUSBAR(widgets.statusbar), widgets.statusbar_context_id);
+    gtk_statusbar_push(GTK_STATUSBAR(widgets.statusbar), 
+                      widgets.statusbar_context_id, status_msg);
+    
+    LOG_INFO(SYS_MON_SUCCESS, "Data updated");
+    return G_SOURCE_CONTINUE; // Continue timer
+} 
