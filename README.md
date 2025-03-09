@@ -7,7 +7,7 @@ A multi-process system monitoring tool with both CLI and GUI interfaces.
 The project is organized into the following directories:
 
 ```
-ConcurrentSystemStats/
+ConSync Monitor/
 ├── src/                    # Source code
 │   ├── core/               # Core monitoring functionality
 │   │   ├── cpu.c/h         # CPU monitoring
